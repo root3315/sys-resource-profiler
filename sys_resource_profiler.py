@@ -25,6 +25,7 @@ class ResourceProfiler:
         self.output_format = output_format
         self.output_file = output_file
         self.samples = []
+        self.memory_timeline = []
         self._running = False
 
     def start(self):
@@ -48,6 +49,17 @@ class ResourceProfiler:
             sample["timestamp"] = datetime.now().isoformat()
             sample["elapsed"] = round(elapsed, 2)
             self.samples.append(sample)
+
+            self.memory_timeline.append({
+                "elapsed": round(elapsed, 2),
+                "timestamp": sample["timestamp"],
+                "mem_used_mb": sample["mem_used_mb"],
+                "mem_available_mb": sample["mem_available_mb"],
+                "mem_percent": sample["mem_percent"],
+                "swap_used_mb": sample["swap_used_mb"],
+                "swap_percent": sample["swap_percent"],
+            })
+
             iteration += 1
 
             if self.output_format == "text":
@@ -210,6 +222,7 @@ class ResourceProfiler:
                 "max": round(max(used_values), 1),
                 "avg": round(sum(used_values) / len(used_values), 1),
             },
+            "timeline": self.memory_timeline,
         }
 
     def _aggregate_disk(self):
@@ -310,6 +323,54 @@ class ResourceProfiler:
 
         print("\n" + "=" * 60)
 
+    def print_memory_timeline(self):
+        """Print a text-based visualization of memory usage over time."""
+        if not self.memory_timeline:
+            print("No memory timeline data available.")
+            return
+
+        timeline = self.memory_timeline
+        max_mem = max(p["mem_used_mb"] for p in timeline)
+        min_mem = min(p["mem_used_mb"] for p in timeline)
+        mem_range = max_mem - min_mem if max_mem != min_mem else 1
+
+        width = 40
+        bar_char = "█"
+        empty_char = "░"
+
+        print("\n" + "=" * 72)
+        print("  MEMORY USAGE OVER TIME")
+        print("=" * 72)
+
+        total_mb = self.samples[0]["mem_total_mb"] if self.samples else 0
+        print(f"  Total Memory: {total_mb:.0f} MB")
+        print(f"  Min Used: {min_mem:.0f} MB | Max Used: {max_mem:.0f} MB")
+        print(f"  Range: {mem_range:.0f} MB")
+        print("-" * 72)
+
+        for entry in timeline:
+            elapsed = entry["elapsed"]
+            used = entry["mem_used_mb"]
+            pct = entry["mem_percent"]
+            fill = int(((used - min_mem) / mem_range) * width) if mem_range > 0 else width // 2
+
+            bar = bar_char * max(1, fill) + empty_char * (width - max(1, fill))
+            print(f"  {elapsed:6.1f}s | {used:7.0f} MB ({pct:5.1f}%) |{bar}|")
+
+        print("-" * 72)
+        print(f"  {'0s':<{width}} {max_mem:.0f} MB")
+        print("=" * 72)
+
+    def get_memory_timeline_json(self):
+        """Return the memory timeline as a JSON-serializable list."""
+        return self.memory_timeline
+
+    def save_memory_timeline(self, filepath):
+        """Save the memory timeline to a JSON file."""
+        with open(filepath, "w") as fh:
+            json.dump(self.memory_timeline, fh, indent=2)
+        print(f"Memory timeline saved to {filepath}")
+
 
 def parse_args():
     """Parse command-line arguments."""
@@ -346,6 +407,17 @@ def parse_args():
         action="store_true",
         help="Generate a quick 3-second profile and exit",
     )
+    parser.add_argument(
+        "--memory-timeline",
+        action="store_true",
+        help="Show memory usage over time after monitoring",
+    )
+    parser.add_argument(
+        "--timeline-output",
+        type=str,
+        default=None,
+        help="Output file path for memory timeline (JSON format)",
+    )
     return parser.parse_args()
 
 
@@ -374,6 +446,12 @@ def main():
             profiler.save_profile(profile, args.output)
         elif args.format == "json":
             print(json.dumps(profile, indent=2, default=str))
+
+    if args.memory_timeline:
+        profiler.print_memory_timeline()
+
+        if args.timeline_output:
+            profiler.save_memory_timeline(args.timeline_output)
 
     return 0
 
